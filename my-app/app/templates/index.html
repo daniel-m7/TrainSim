@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jeopardy Game</title>
+    <style>
+        .jeopardy-board {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            margin: 20px;
+        }
+        .jeopardy-cell {
+            background-color: #007bff;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Jeopardy Game</h1>
+    <div class="jeopardy-board">
+        <div class="jeopardy-cell" data-value="100">100</div>
+        <div class="jeopardy-cell" data-value="200">200</div>
+        <div class="jeopardy-cell" data-value="300">300</div>
+        <div class="jeopardy-cell" data-value="400">400</div>
+        <div class="jeopardy-cell" data-value="500">500</div>
+    </div>
+
+    <div id="question-container"></div>
+    <div id="answer-container"></div>
+
+    <script>
+        document.querySelectorAll('.jeopardy-cell').forEach(cell => {
+            cell.addEventListener('click', async () => {
+                const value = cell.getAttribute('data-value');
+                const response = await fetch(`/get_question/${value}`);
+                const data = await response.json();
+                document.getElementById('question-container').innerText = data.question;
+                document.getElementById('answer-container').innerText = data.answer;
+            });
+        });
+    </script>
+</body>
+</html>
