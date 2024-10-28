@@ -15,8 +15,8 @@ password = 'xfG1Z0WseTkszMidYnnyfrN0OTn6xkM-u03K31q691w'
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
 class Neo4jConnection:
-    def __init__(self, uri, user, password):
-        self._driver = GraphDatabase.driver(uri, auth=(user, password))
+    def __init__(self, uri, user, pwd):
+        self._driver = GraphDatabase.driver(uri, auth=(user, pwd))
 
     def close(self):
         self._driver.close()
