@@ -3,9 +3,16 @@ import pandas as pd
 from neo4j import GraphDatabase
 
 # Neo4j configuration
-uri = "bolt://localhost:7687"
-user = "neo4j"
-password = "admin123"
+# uri = "bolt://localhost:7687"
+# user = "neo4j"
+# password = "admin123"
+
+uri = "neo4j+s://1b2ebe15.databases.neo4j.io"
+username = "neo4j"
+password = 'xfG1Z0WseTkszMidYnnyfrN0OTn6xkM-u03K31q691w'
+
+#graph = Neo4jGraph(uri, username, password)
+driver = GraphDatabase.driver(uri, auth=(username, password))
 
 class Neo4jConnection:
     def __init__(self, uri, user, password):
@@ -52,7 +59,7 @@ st.title("Jeopardy Game")
 st.header(f"Your Score: {st.session_state.score}")
 
 # Connect to Neo4j and retrieve data
-conn = Neo4jConnection(uri, user, password)
+conn = Neo4jConnection(uri=uri, user=username, pwd=password)
 query = '''
 MATCH (a:Answer)<-[:HAS_ANSWER]-(q:Question)-[:IN_CATEGORY]->(c:Category)
 RETURN c.name as category, q.text AS question, q.points AS points, a.text as answer
