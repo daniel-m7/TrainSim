@@ -4,6 +4,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import OpenAI
 import fitz  # PyMuPDF
 import tiktoken  # Import tiktoken for token counting
+import os
 
 
 
@@ -55,8 +56,9 @@ if len(pdf_tokens) > max_context_length:
 pdf_text = tokenizer.decode(pdf_tokens)
 
 # Initialize LangChain LLM with the loaded PDF text
-openai_api_key = "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"
-llm = OpenAI(api_key=openai_api_key)
+api_key = os.getenv('OPENAI_API_KEY')
+llm = OpenAI(api_key)
+
 
 def answer_question(question, context):
     prompt_template = PromptTemplate(

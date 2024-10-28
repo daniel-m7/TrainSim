@@ -27,131 +27,110 @@ parent_splitter = TokenTextSplitter(chunk_size=512, chunk_overlap=24)
 child_splitter = TokenTextSplitter(chunk_size=100, chunk_overlap=24)
 parent_documents = parent_splitter.split_documents(documents)
 
-for i, parent in enumerate(parent_documents):
-    child_documents = child_splitter.split_documents([parent])
-    params = {
-        "parent_text": parent.page_content,
-        "parent_id": i,
-        "parent_embedding": embeddings.embed_query(parent.page_content),
-        "children": [
-            {
-                "text": c.page_content,
-                "id": f"{i}-{ic}",
-                "embedding": embeddings.embed_query(c.page_content),
-            }
-            for ic, c in enumerate(child_documents)
-        ],
-    }
-    # Ingest data
-    graph.query(
-        """
-    MERGE (p:Parent {id: $parent_id})
-    SET p.text = $parent_text
-    WITH p
-    CALL db.create.setVectorProperty(p, 'embedding', $parent_embedding)
-    YIELD node
-    WITH p 
-    UNWIND $children AS child
-    MERGE (c:Child {id: child.id})
-    SET c.text = child.text
-    MERGE (c)<-[:HAS_CHILD]-(p)
-    WITH c, child
-    CALL db.create.setVectorProperty(c, 'embedding', child.embedding)
-    YIELD node
-    RETURN count(*)
-    """,
-        params,
+class JeopardyQuestion(BaseModel):
+    """Structuring questions with categories, points, and answers."""
+    category: str = Field(..., description="Jeopardy-style category")
+    question: str = Field(..., description="Generated question")
+    answer: str = Field(..., description="Generated answer")
+    points: int = Field(..., description="Point value associated with the question")
+
+class JeopardyQuestions(BaseModel):
+    """Generating hypothetical Jeopardy-style questions with answers."""
+    categories: List[str] = Field(..., description="List of generated categories")
+    questions: List[JeopardyQuestion] = Field(
+        ..., description="List of questions with their categories, answers, and points"
     )
-    # Create vector index for child
-    try:
-        graph.query(
-            "CALL db.index.vector.createNodeIndex('parent_document', "
-            "'Child', 'embedding', $dimension, 'cosine')",
-            {"dimension": embedding_dimension},
-        )
-    except ClientError:  # already exists
-        pass
-    # Create vector index for parents
-    try:
-        graph.query(
-            "CALL db.index.vector.createNodeIndex('typical_rag', "
-            "'Parent', 'embedding', $dimension, 'cosine')",
-            {"dimension": embedding_dimension},
-        )
-    except ClientError:  # already exists
-        pass
-# Ingest hypothethical questions
-
-
-class Questions(BaseModel):
-    """Generating hypothetical questions about text."""
-
-    questions: List[str] = Field(
-        ...,
-        description=(
-            "Generated hypothetical questions based on " "the information from the text"
-        ),
-    )
-
 
 questions_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             (
-                "You are generating hypothetical questions based on the information "
-                "found in the text. Make sure to provide full context in the generated "
-                "questions."
+                "You are generating hypothetical Jeopardy-style questions, answers, and six distinct categories "
+                "based on the information found in the text. Ensure that each category has at least 5 questions, "
+                "with point values increasing from 100 to 500 as the questions get more difficult. For each question, "
+                "also generate the correct answer."
             ),
         ),
         (
             "human",
             (
-                "Use the given format to generate hypothetical questions from the "
+                "Use the given format to generate hypothetical questions, answers, and Jeopardy-style categories from the "
                 "following input: {input}"
             ),
         ),
     ]
 )
 
-question_chain = questions_prompt | llm.with_structured_output(Questions)
+question_chain = questions_prompt | llm.with_structured_output(JeopardyQuestions)
 
 for i, parent in enumerate(parent_documents):
-    questions = question_chain.invoke(parent.page_content).questions
-    params = {
-        "parent_id": i,
-        "questions": [
-            {"text": q, "id": f"{i}-{iq}", "embedding": embeddings.embed_query(q)}
-            for iq, q in enumerate(questions)
-            if q
-        ],
-    }
-    graph.query(
-        """
-    MERGE (p:Parent {id: $parent_id})
-    WITH p
-    UNWIND $questions AS question
-    CREATE (q:Question {id: question.id})
-    SET q.text = question.text
-    MERGE (q)<-[:HAS_QUESTION]-(p)
-    WITH q, question
-    CALL db.create.setVectorProperty(q, 'embedding', question.embedding)
-    YIELD node
-    RETURN count(*)
-    """,
-        params,
-    )
-    # Create vector index
-    try:
-        graph.query(
-            "CALL db.index.vector.createNodeIndex('hypothetical_questions', "
-            "'Question', 'embedding', $dimension, 'cosine')",
-            {"dimension": embedding_dimension},
-        )
-    except ClientError:  # already exists
-        pass
+    jeopardy_data = question_chain.invoke(parent.page_content)
+    categories = jeopardy_data.categories
+    questions = jeopardy_data.questions
 
-# Ingest summaries
+    # Ensure only 6 categories are used, each with at least 5 questions
+    category_question_count = {}
+    for question_data in questions:
+        category = question_data.category
+        if category not in category_question_count:
+            category_question_count[category] = []
+        category_question_count[category].append(question_data)
+
+    selected_categories = [cat for cat, qs in category_question_count.items() if len(qs) >= 5]
+    if len(selected_categories) > 6:
+        selected_categories = selected_categories[:6]
+
+    # Ingest the selected categories, questions, and answers
+    for category in selected_categories:
+        questions_in_category = category_question_count[category]
+        if len(questions_in_category) < 5:
+            continue  # Skip categories with fewer than 5 questions
+
+        params = {
+            "parent_id": i,
+            "category": category,
+            "questions": [
+                {
+                    "text": q.question,
+                    "id": f"{i}-{q.points}",
+                    "points": q.points,
+                    "embedding": embeddings.embed_query(q.question),
+                    "answer": q.answer
+                }
+                for q in questions_in_category[:5]  # Ensure exactly 5 questions
+            ],
+        }
+        graph.query(
+            """
+        MERGE (p:Parent {id: $parent_id})
+        WITH p
+        MERGE (cat:Category {name: $category})
+        WITH p, cat
+        UNWIND $questions AS question
+        CREATE (q:Question {id: question.id})
+        SET q.text = question.text, q.points = question.points
+        MERGE (q)-[:IN_CATEGORY]->(cat)-[:FOR_PARENT]->(p)
+        CREATE (a:Answer {text: question.answer})
+        MERGE (q)-[:HAS_ANSWER]->(a)
+        WITH q, question
+        CALL db.create.setVectorProperty(q, 'embedding', question.embedding)
+        YIELD node
+        RETURN count(*)
+        """,
+            params,
+        )
+        # Create vector index
+        try:
+            graph.query(
+                "CALL db.index.vector.createNodeIndex('hypothetical_questions', "
+                "'Question', 'embedding', $dimension, 'cosine')",
+                {"dimension": embedding_dimension},
+            )
+        except ClientError:  # already exists
+            pass
+
+# Ingest summaries (optional, left unchanged)
 
 summary_prompt = ChatPromptTemplate.from_messages(
     [

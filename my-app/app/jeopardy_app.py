@@ -1,9 +1,7 @@
 import streamlit as st
+import pandas as pd
 from neo4j import GraphDatabase
-import fitz  # PyMuPDF
-import tiktoken
-from langchain_openai import OpenAI
-from langchain_core.prompts import PromptTemplate
+import random
 
 # Neo4j configuration
 uri = "bolt://localhost:7687"
@@ -17,63 +15,85 @@ class Neo4jConnection:
     def close(self):
         self._driver.close()
 
-    def fetch_questions(self):
-        query = "MATCH (q:Question) RETURN q.text AS question"
+    def run_query(self, query):
         with self._driver.session() as session:
             result = session.run(query)
-            questions = [record["question"] for record in result]
-        return questions
+            data = [dict(record) for record in result]
+        return data
 
-def extract_text_from_pdf(pdf_path):
-    document = fitz.open(pdf_path)
-    text = ''
-    for page_num in range(len(document)):
-        page = document.load_page(page_num)
-        text += page.get_text()
-    return text
+def get_dataframe_from_query(data):
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df.columns = ['category', 'question', 'points']
+    return df
 
-def get_pdf_text_truncated(pdf_path):
-    pdf_text = extract_text_from_pdf(pdf_path)
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-    max_context_length = 3800 - 256
-    pdf_tokens = tokenizer.encode(pdf_text)
-    if len(pdf_tokens) > max_context_length:
-        pdf_tokens = pdf_tokens[:max_context_length]
-    return tokenizer.decode(pdf_tokens)
-
-def answer_question(question, context):
-    openai_api_key = "your_openai_api_key"
-    llm = OpenAI(api_key=openai_api_key)
-    prompt_template = PromptTemplate(
-        template="Answer the following question based on the given context:\n\nContext: {context}\n\nQuestion: {question}\nAnswer:",
-        input_variables=["context", "question"]
-    )
-    prompt = prompt_template.format(context=context, question=question)
-    response = llm.invoke(prompt)
-    return response.strip()
+def display_question(category, question, points):
+    st.write(f"**Question for {points} points in {category}:** {question}")
+    if st.button("Show Answer", key=f"show_answer_{category}_{points}"):
+        st.write(f"**Answer:** [Display the answer here]")  # Replace with actual logic if needed
+        st.session_state.score += points
 
 # Streamlit App
-st.title("Jeopardy Game")
+st.title("Server Training Jeopardy Game")
 
-# Connect to Neo4j and fetch questions
+# Initialize session state
+if "score" not in st.session_state:
+    st.session_state.score = 0
+
 conn = Neo4jConnection(uri, user, password)
-questions = conn.fetch_questions()
-conn.close()
 
-pdf_path = 'menu.pdf'
-pdf_text = get_pdf_text_truncated(pdf_path)
+# Run the Cypher query to retrieve all categories, questions, and points
+query = """
+MATCH (q:Question)-[:IN_CATEGORY]->(c:Category)
+RETURN c.name as category, q.text AS question, q.points AS points ORDER BY c.name
+"""
+data = conn.run_query(query)
 
-categories = {"General Knowledge": questions}
+# Convert the result to a DataFrame
+df = get_dataframe_from_query(data)
 
-selected_category = st.selectbox("Select a Category", list(categories.keys()))
+# Check if the DataFrame is empty before proceeding
+if df.empty:
+    st.write("No data available. Please check the Neo4j database or ingestion process.")
+else:
+    # Filter to select only categories with at least 5 questions
+    category_counts = df['category'].value_counts()
+    selected_categories = category_counts[category_counts >= 5].index.tolist()
 
-if selected_category:
-    st.header(f"Category: {selected_category}")
-    for question in categories[selected_category]:
-        if st.button(question):
-            st.write(f"**Question:** {question}")
-            answer = answer_question(question, pdf_text)
-            st.write(f"**Answer:** {answer}")
+    # Select 4 random categories
+    if len(selected_categories) > 4:
+        selected_categories = random.sample(selected_categories, 4)
+
+    # Filter the DataFrame to include only the selected categories and first 5 questions per category
+    filtered_df = df[df['category'].isin(selected_categories)]
+    filtered_df = filtered_df.groupby('category').head(5)
+
+    # Display the Jeopardy board
+    st.subheader("Select a category and click on the point value to see the question. Click 'Show Answer' to reveal the answer.")
+    cols = st.columns(len(selected_categories))
+
+    for idx, category in enumerate(selected_categories):
+        with cols[idx]:
+            st.header(category)
+            category_df = filtered_df[filtered_df['category'] == category]
+            for _, row in category_df.iterrows():
+                points = row["points"]
+                question = row["question"]
+                if st.button(f"{points}", key=f"{category}_{points}"):
+                    st.session_state["current_question"] = (category, question, points)
+                    st.session_state["question_displayed"] = True
+                    st.rerun()  # Updated to use the new rerun method
+
+    # Display the current question and answer if a point button is clicked
+    if st.session_state.get("question_displayed"):
+        category, question, points = st.session_state["current_question"]
+        display_question(category, question, points)
+        st.session_state["question_displayed"] = False  # Reset to ensure the question isn't displayed again automatically
+
+    # Show the current score
+    st.write(f"**Score:** {st.session_state.score}")
 
 # Footer
-st.write("Select a category and click on the question to see the question. The answer will be displayed automatically.")
+st.write("Select a category and click on the point value to see the question. Click 'Show Answer' to reveal the answer.")
+
+conn.close()
