@@ -4,6 +4,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import OpenAI
 import fitz  # PyMuPDF
 import tiktoken  # Import tiktoken for token counting
+import streamlit as st
+from dotenv import load_dotenv
 import os
 
 
@@ -56,8 +58,14 @@ if len(pdf_tokens) > max_context_length:
 pdf_text = tokenizer.decode(pdf_tokens)
 
 # Initialize LangChain LLM with the loaded PDF text
-api_key = os.getenv('OPENAI_API_KEY')
-llm = OpenAI(api_key)
+
+
+# Load environment variables from .env for local development
+load_dotenv()
+# Fetch OpenAI API key from Streamlit secrets on the cloud or .env for local
+openai_api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+
+llm = OpenAI(openai_api_key)
 
 
 def answer_question(question, context):
