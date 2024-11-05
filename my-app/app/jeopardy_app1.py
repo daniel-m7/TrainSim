@@ -3,13 +3,13 @@ import pandas as pd
 from neo4j import GraphDatabase
 
 # Neo4j configuration
-# uri = "bolt://localhost:7687"
-# user = "neo4j"
-# password = "admin123"
-
-uri = "neo4j+s://1b2ebe15.databases.neo4j.io"
+uri = "bolt://localhost:7687"
 username = "neo4j"
-password = 'xfG1Z0WseTkszMidYnnyfrN0OTn6xkM-u03K31q691w'
+password = "admin123"
+
+#uri = "neo4j+s://1b2ebe15.databases.neo4j.io"
+#username = "neo4j"
+#password = 'xfG1Z0WseTkszMidYnnyfrN0OTn6xkM-u03K31q691w'
 
 #graph = Neo4jGraph(uri, username, password)
 driver = GraphDatabase.driver(uri, auth=(username, password))
