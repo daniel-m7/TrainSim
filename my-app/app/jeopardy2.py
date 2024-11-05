@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from langchain_community.graphs import Neo4jGraph
+import textdistance  # Import textdistance for similarity calculations
 
 # Initialize Neo4jGraph using default configuration
 graph = Neo4jGraph()
@@ -21,19 +22,15 @@ def fetch_jeopardy_data():
     } for record in result]
     return pd.DataFrame(data)
 
-# Load data and handle duplicates by aggregating questions with the same category and points
+# Load data and handle duplicates
 df = fetch_jeopardy_data()
-
-# Combine questions with the same category and points by joining them with a separator
 questions_aggregated_df = df.groupby(['category', 'points']).agg({
     'question': ' | '.join,
     'answer': ' | '.join
 }).reset_index()
-
-# Pivot and transpose the DataFrame to create a category-question matrix
 transposed_df = questions_aggregated_df.pivot(index="points", columns="category", values="question")
 
-# Initialize session state for clicked questions and score
+# Initialize session state
 if 'clicked_questions' not in st.session_state:
     st.session_state.clicked_questions = set()
 if 'score' not in st.session_state:
@@ -44,36 +41,33 @@ if 'current_answer' not in st.session_state:
     st.session_state.current_answer = None
 if 'current_points' not in st.session_state:
     st.session_state.current_points = None
+if 'feedback' not in st.session_state:
+    st.session_state.feedback = None
 
-# Title of the app (centered)
+# Title of the app
 st.markdown("<h1 style='text-align: center;'>Jeopardy Game</h1>", unsafe_allow_html=True)
 
-# Define unique categories and points
+# Define categories and points
 categories = transposed_df.columns
 points_levels = transposed_df.index
 
-# Layout: Categories on the left, Question panel on the right
+# Layout setup
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    # Display category headers
     category_columns_layout = st.columns(len(categories))
     for i, category in enumerate(categories):
         with category_columns_layout[i]:
             st.markdown(f"<div style='text-align: center;'><strong>{category}</strong></div>", unsafe_allow_html=True)
 
-    # Display questions based on the transposed DataFrame
     for point in points_levels:
         row_columns = st.columns(len(categories))
         for i, category in enumerate(categories):
             question = transposed_df.at[point, category]
-            if pd.notna(question):  # Only display non-empty cells
+            if pd.notna(question):
                 with row_columns[i]:
                     question_key = f"{category}-{point}"
-
-                    # Check if the question is already clicked
                     if question_key not in st.session_state.clicked_questions:
-                        # Button to reveal the question
                         if st.button(f"{point}", key=question_key, help=question):
                             st.session_state.clicked_questions.add(question_key)
                             st.session_state.current_question = question
@@ -82,32 +76,45 @@ with col1:
                                 (questions_aggregated_df['category'] == category) & 
                                 (questions_aggregated_df['points'] == point)
                             ]['answer'].values[0]
+                            st.session_state.feedback = None
                             st.rerun()
                     else:
                         st.write(f"Answered {point}")
 
 with col2:
-    # Score display on the right side
     st.markdown(f"<div style='text-align: right; font-size: large;'><strong>Your Score: {st.session_state.score}</strong></div>", unsafe_allow_html=True)
 
-    # Display the question panel if a question is selected
     if st.session_state.current_question:
         st.markdown("<div style='background-color: #ADD8E6; padding: 10px;'><strong>Question:</strong></div>", unsafe_allow_html=True)
         st.write(st.session_state.current_question)
 
-        # Answer input and check
         answer = st.text_input("Your Answer", key="current_answer_input")
         if st.button("Submit Answer"):
             correct_answer = st.session_state.current_answer.lower()
+            similarity = textdistance.jaro_winkler.normalized_similarity(answer.lower(), correct_answer)
+            similarity_percentage = round(similarity * 100, 2)
+            partial_points = int(st.session_state.current_points * (similarity_percentage / 100))
+
             if answer.lower() == correct_answer:
                 st.success("Correct!")
                 st.session_state.score += st.session_state.current_points
+                st.session_state.feedback = f"Correct! You earned {st.session_state.current_points} points."
             else:
                 st.error(f"Incorrect! The correct answer was: {correct_answer}")
+                st.session_state.score += partial_points
+                st.session_state.feedback = (
+                    f"Incorrect! The correct answer was: {correct_answer}. "
+                    f"Your answer was {similarity_percentage}% correct. You earned {partial_points} points."
+                )
+
             st.session_state.current_question = None
             st.session_state.current_answer = None
             st.session_state.current_points = None
             st.rerun()
+
+    # Display feedback after the question panel disappears
+    if st.session_state.feedback:
+        st.write(st.session_state.feedback)
 
 # Close Neo4j connection after the game
 if st.button("End Game"):
