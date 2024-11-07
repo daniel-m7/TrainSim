@@ -52,6 +52,7 @@ questions_aggregated_df = df.groupby(['category', 'points']).agg({
 }).reset_index()
 transposed_df = questions_aggregated_df.pivot(index="points", columns="category", values="question")
 
+# Initialize session state
 if 'clicked_questions' not in st.session_state:
     st.session_state.clicked_questions = set()
 if 'score' not in st.session_state:
@@ -73,7 +74,6 @@ points_levels = transposed_df.index
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    # Reduce font size for category headers
     category_columns_layout = st.columns(len(categories))
     for i, category in enumerate(categories):
         with category_columns_layout[i]:
@@ -99,7 +99,11 @@ with col1:
                             speak_text_async(question)
                             st.rerun()
                     else:
-                        st.write(f"Answered {point}")
+                        # Custom styling for "Answered [point value]" text
+                        st.markdown(
+                            f"<div style='text-align: center; font-family: Arial; font-size: 12px; color: #333333; font-weight: normal;'>Answered {point}</div>",
+                            unsafe_allow_html=True
+                        )
 
 with col2:
     st.markdown(f"<div style='text-align: right; font-size: large;'><strong>Your Score: {st.session_state.score}</strong></div>", unsafe_allow_html=True)
@@ -113,27 +117,30 @@ with col2:
             correct_answer = st.session_state.current_answer.lower()
             similarity = textdistance.jaro_winkler.normalized_similarity(answer.lower(), correct_answer)
             similarity_percentage = round(similarity * 100, 2)
-            partial_points = int(st.session_state.current_points * (similarity_percentage / 100))
 
-            if answer.lower() == correct_answer:
+            if similarity_percentage >= 80:
+                # Award points if the answer is 80% or more correct
                 st.success("Correct!")
                 st.session_state.score += st.session_state.current_points
                 st.session_state.feedback = f"Correct! You earned {st.session_state.current_points} points."
             else:
+                # Subtract points if the answer is less than 80% correct
                 st.error(f"Incorrect! The correct answer was: {correct_answer}")
-                st.session_state.score += partial_points
+                st.session_state.score -= st.session_state.current_points
                 st.session_state.feedback = (
-                    f"Incorrect! The correct answer was: {correct_answer}. "
-                    f"Your answer was {similarity_percentage}% correct. You earned {partial_points} points."
+                    f"Incorrect! You lost {st.session_state.current_points} points. The correct answer was: {correct_answer}."
                 )
 
+            # Reset the question state after submission
             st.session_state.current_question = None
             st.session_state.current_answer = None
             st.session_state.current_points = None
             st.rerun()
 
+    # Display feedback after the question panel disappears
     if st.session_state.feedback:
         st.write(st.session_state.feedback)
 
+# Close Neo4j connection after the game
 if st.button("End Game"):
     graph.close()
