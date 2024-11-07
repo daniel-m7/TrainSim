@@ -1,12 +1,35 @@
 import streamlit as st
 import pandas as pd
 from langchain_community.graphs import Neo4jGraph
-import textdistance  # Import textdistance for similarity calculations
+import textdistance
+from gtts import gTTS
+import pygame
+import uuid
+import os
+import time
+import threading
 
 # Initialize Neo4jGraph using default configuration
 graph = Neo4jGraph()
 
-# Fetch data from Neo4j
+# Initialize pygame mixer for audio playback
+pygame.mixer.init()
+
+def speak_text_async(text):
+    def play_audio():
+        filename = f"temp_audio_{uuid.uuid4()}.mp3"
+        tts = gTTS(text=text, lang='en')
+        tts.save(filename)
+        pygame.mixer.music.load(filename)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            time.sleep(0.1)
+        pygame.mixer.music.stop()
+        pygame.mixer.music.unload()
+        os.remove(filename)
+    
+    threading.Thread(target=play_audio, daemon=True).start()
+
 def fetch_jeopardy_data():
     query = """
     MATCH (cat:CategorySection)<-[:IN_CATEGORY]-(q:Question)-[:HAS_ANSWER]-(a:Answer)
@@ -22,7 +45,6 @@ def fetch_jeopardy_data():
     } for record in result]
     return pd.DataFrame(data)
 
-# Load data and handle duplicates
 df = fetch_jeopardy_data()
 questions_aggregated_df = df.groupby(['category', 'points']).agg({
     'question': ' | '.join,
@@ -30,7 +52,6 @@ questions_aggregated_df = df.groupby(['category', 'points']).agg({
 }).reset_index()
 transposed_df = questions_aggregated_df.pivot(index="points", columns="category", values="question")
 
-# Initialize session state
 if 'clicked_questions' not in st.session_state:
     st.session_state.clicked_questions = set()
 if 'score' not in st.session_state:
@@ -44,22 +65,20 @@ if 'current_points' not in st.session_state:
 if 'feedback' not in st.session_state:
     st.session_state.feedback = None
 
-# Title of the app
 st.markdown("<h1 style='text-align: center;'>Jeopardy Game</h1>", unsafe_allow_html=True)
 
-# Define categories and points
 categories = transposed_df.columns
 points_levels = transposed_df.index
 
-# Layout setup
 col1, col2 = st.columns([3, 1])
 
 with col1:
+    # Reduce font size for category headers
     category_columns_layout = st.columns(len(categories))
     for i, category in enumerate(categories):
         with category_columns_layout[i]:
-            st.markdown(f"<div style='text-align: center;'><strong>{category}</strong></div>", unsafe_allow_html=True)
-
+            st.markdown(f"<div style='text-align: center; font-size: 12px;'><strong>{category}</strong></div>", unsafe_allow_html=True)  # Smaller font size
+    
     for point in points_levels:
         row_columns = st.columns(len(categories))
         for i, category in enumerate(categories):
@@ -77,6 +96,7 @@ with col1:
                                 (questions_aggregated_df['points'] == point)
                             ]['answer'].values[0]
                             st.session_state.feedback = None
+                            speak_text_async(question)
                             st.rerun()
                     else:
                         st.write(f"Answered {point}")
@@ -112,10 +132,8 @@ with col2:
             st.session_state.current_points = None
             st.rerun()
 
-    # Display feedback after the question panel disappears
     if st.session_state.feedback:
         st.write(st.session_state.feedback)
 
-# Close Neo4j connection after the game
 if st.button("End Game"):
     graph.close()
